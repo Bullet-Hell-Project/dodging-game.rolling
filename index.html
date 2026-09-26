@@ -1,0 +1,647 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>red square · dodging white squares</title>
+<style>
+  * { box-sizing: border-box; user-select: none; }
+  body {
+    margin: 0;
+    min-height: 100vh;
+    background: #000;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    font-family: monospace;
+  }
+  canvas { display: block; background: #000; cursor: default; }
+  .hud {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    width: 800px;
+    padding: 8px 4px;
+    color: #fff;
+    font-family: monospace;
+    font-size: 16px;
+  }
+  button {
+    background: #fff;
+    color: #000;
+    border: none;
+    padding: 4px 14px;
+    font-family: monospace;
+    font-size: 14px;
+    cursor: pointer;
+  }
+  button:hover { background: #ccc; }
+</style>
+</head>
+<body>
+<div class="hud">
+  <span id="hpText">HP: 80 / 80</span>
+  <span id="bossText">BOSS: 160 / 160</span>
+  <span id="warningText">SAFE</span>
+  <button id="resetBtn">RESTART</button>
+</div>
+<canvas id="gameCanvas" width="800" height="500"></canvas>
+
+<script>
+  (function() {
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    const hpTextSpan = document.getElementById('hpText');
+    const bossTextSpan = document.getElementById('bossText');
+    const warningTextSpan = document.getElementById('warningText');
+
+    const PLAYER_SIZE = 12;
+    const PLAYER_SPEED = 6;
+    const MAX_HP = 80;
+    const DAMAGE = 5;
+    const INVINCIBLE_TIME = 0.9;
+
+    const W = canvas.width;
+    const H = canvas.height;
+
+    // Boss
+    const BOSS_SIZE = 60;
+    const BOSS_MAX_HP = 160;
+    const FIGHT_DAMAGE = 8;
+
+    // Fight button — base timings at full HP
+    const FIGHT_W = 80;
+    const FIGHT_H = 30;
+    const FIGHT_LIFETIME = 4.0;
+    const FIGHT_SPAWN_MIN = 3.5;
+    const FIGHT_SPAWN_MAX = 5.5;
+    // At 0 HP, multiply spawn delay by this (smaller = faster spawns)
+    const FIGHT_SPAWN_LOWHP_MULT = 0.3;
+
+    let player = {
+      x: W / 2,
+      y: H / 2,
+      size: PLAYER_SIZE,
+      hp: MAX_HP,
+      maxHp: MAX_HP,
+      invincible: false,
+      invincibleTimer: 0,
+      visible: true,
+      blinkAccum: 0
+    };
+
+    let boss = {
+      x: W - 90,
+      y: 90,
+      size: BOSS_SIZE,
+      hp: BOSS_MAX_HP,
+      maxHp: BOSS_MAX_HP,
+      hitFlash: 0
+    };
+
+    let bullets = [];
+    let warning = null;
+    let pendingPattern = null;
+
+    let phase = 'idle';
+    let phaseTimer = 1.5;
+    let totalTime = 0;
+
+    let fightButton = null;
+    let fightSpawnTimer = 2.5;
+
+    let damageTexts = [];
+
+    let keys = {};
+    let gameOver = false;
+    let won = false;
+    let lastTimestamp = 0;
+
+    function updateHud() {
+      hpTextSpan.textContent = `HP: ${Math.max(0, player.hp)} / ${player.maxHp}`;
+      bossTextSpan.textContent = `BOSS: ${Math.max(0, boss.hp)} / ${boss.maxHp}`;
+    }
+
+    function reset() {
+      gameOver = false;
+      won = false;
+      player.x = W / 2;
+      player.y = H / 2;
+      player.hp = MAX_HP;
+      player.invincible = false;
+      player.invincibleTimer = 0;
+      player.visible = true;
+      player.blinkAccum = 0;
+
+      boss.hp = BOSS_MAX_HP;
+      boss.hitFlash = 0;
+
+      bullets = [];
+      warning = null;
+      pendingPattern = null;
+      phase = 'idle';
+      phaseTimer = 1.5;
+      totalTime = 0;
+
+      fightButton = null;
+      fightSpawnTimer = 2.5;
+      damageTexts = [];
+
+      keys = {};
+      updateHud();
+      warningTextSpan.textContent = 'SAFE';
+    }
+
+    // Returns the next fight-button spawn delay based on current HP.
+    // Low HP → shorter delay → more buttons.
+    function nextFightSpawnDelay() {
+      const baseDelay = FIGHT_SPAWN_MIN + Math.random() * (FIGHT_SPAWN_MAX - FIGHT_SPAWN_MIN);
+      const hpRatio = Math.max(0, Math.min(1, player.hp / player.maxHp));  // 1 = full, 0 = dead
+      // Lerp between low-HP multiplier (0 HP) and 1.0 (full HP)
+      const mult = FIGHT_SPAWN_LOWHP_MULT + (1 - FIGHT_SPAWN_LOWHP_MULT) * hpRatio;
+      return baseDelay * mult;
+    }
+
+    // ==================== ATTACK PATTERNS ====================
+
+    function spawnSwarm(fromLeft, bandY, bandHeight) {
+      const startX = fromLeft ? -20 : W + 20;
+      const vx = fromLeft ? 9 : -9;
+      const count = 45;
+      for (let i = 0; i < count; i++) {
+        const size = 6 + Math.random() * 6;
+        const y = bandY + Math.random() * bandHeight;
+        const x = startX + (fromLeft ? -1 : 1) * (Math.random() * 400);
+        const vy = (Math.random() - 0.5) * 1.2;
+        bullets.push({ x, y, size, vx, vy });
+      }
+    }
+
+    function spawnRain() {
+      const count = 22;
+      for (let i = 0; i < count; i++) {
+        const size = 7 + Math.random() * 6;
+        const baseX = player.x + (Math.random() - 0.5) * 240;
+        const x = Math.max(size / 2, Math.min(W - size / 2, baseX));
+        const y = -20 - Math.random() * 120;
+        const vy = 6 + Math.random() * 3;
+        bullets.push({ x, y, size, vx: 0, vy });
+      }
+    }
+
+    function spawnWall(fromLeft, gapY, gapSize) {
+      const startX = fromLeft ? -20 : W + 20;
+      const vx = fromLeft ? 7 : -7;
+      const size = 10;
+      const step = size + 1;
+      const count = Math.ceil(H / step) + 2;
+      for (let i = 0; i < count; i++) {
+        const y = i * step - step;
+        if (y + size > gapY && y < gapY + gapSize) continue;
+        bullets.push({ x: startX, y, size, vx, vy: 0 });
+      }
+    }
+
+    function spawnSpiral() {
+      const cx = player.x;
+      const cy = player.y;
+      const count = 24;
+      for (let i = 0; i < count; i++) {
+        const ang = (i / count) * Math.PI * 2;
+        const r = 220 + Math.random() * 40;
+        const size = 7;
+        const x = cx + Math.cos(ang) * r;
+        const y = cy + Math.sin(ang) * r;
+        const speed = 4.5;
+        bullets.push({
+          x, y, size,
+          vx: -Math.cos(ang) * speed,
+          vy: -Math.sin(ang) * speed
+        });
+      }
+    }
+
+    function spawnCross() {
+      const cx = player.x, cy = player.y;
+      const starts = [
+        { x: -20, y: cy },
+        { x: W + 20, y: cy },
+        { x: cx, y: -20 },
+        { x: cx, y: H + 20 }
+      ];
+      for (const sp of starts) {
+        for (let i = 0; i < 6; i++) {
+          const size = 8;
+          const jitter = (Math.random() - 0.5) * 60;
+          const dx = (cx + jitter) - sp.x;
+          const dy = (cy + jitter) - sp.y;
+          const len = Math.hypot(dx, dy) || 1;
+          const speed = 5;
+          bullets.push({
+            x: sp.x, y: sp.y, size,
+            vx: (dx / len) * speed,
+            vy: (dy / len) * speed
+          });
+        }
+      }
+    }
+
+    // ==================== PATTERN SCHEDULER ====================
+
+    const patterns = [
+      { name: 'swarm',  weight: 3, spawn: (c) => spawnSwarm(c.fromLeft, c.bandY, c.bandHeight) },
+      { name: 'rain',   weight: 2, spawn: () => spawnRain() },
+      { name: 'wall',   weight: 3, spawn: (c) => spawnWall(c.fromLeft, c.gapY, c.gapSize) },
+      { name: 'spiral', weight: 2, spawn: () => spawnSpiral() },
+      { name: 'cross',  weight: 2, spawn: () => spawnCross() }
+    ];
+
+    function pickPattern() {
+      const total = patterns.reduce((s, p) => s + p.weight, 0);
+      let r = Math.random() * total;
+      for (const p of patterns) {
+        r -= p.weight;
+        if (r <= 0) return p;
+      }
+      return patterns[0];
+    }
+
+    function getCooldown() {
+      const base = 1.5;
+      const minCd = 0.7;
+      return Math.max(minCd, base - totalTime * 0.006);
+    }
+
+    function startPattern() {
+      const p = pickPattern();
+      pendingPattern = p;
+
+      if (p.name === 'swarm') {
+        const fromLeft = Math.random() < 0.5;
+        const bandHeight = 80 + Math.random() * 100;
+        let bandY;
+        if (Math.random() < 0.6) {
+          bandY = player.y - bandHeight / 2 + (Math.random() - 0.5) * 60;
+        } else {
+          bandY = Math.random() * (H - bandHeight);
+        }
+        bandY = Math.max(0, Math.min(H - bandHeight, bandY));
+        warning = { type: 'swarm', fromLeft, bandY, bandHeight, timer: 0.9, duration: 0.9 };
+        pendingPattern.ctx = { fromLeft, bandY, bandHeight };
+        phase = 'warning';
+        phaseTimer = 0.9;
+      } else if (p.name === 'wall') {
+        const fromLeft = Math.random() < 0.5;
+        const gapSize = 110;
+        const gapY = Math.random() * (H - gapSize);
+        warning = { type: 'wall', fromLeft, gapY, gapSize, timer: 0.8, duration: 0.8 };
+        pendingPattern.ctx = { fromLeft, gapY, gapSize };
+        phase = 'warning';
+        phaseTimer = 0.8;
+      } else {
+        p.spawn({});
+        pendingPattern = null;
+        phase = 'idle';
+        phaseTimer = getCooldown();
+      }
+    }
+
+    // ==================== FIGHT BUTTON ====================
+
+    function spawnFightButton() {
+      const pad = 20;
+      let bx, by, tries = 0;
+      do {
+        bx = pad + Math.random() * (W - FIGHT_W - pad * 2);
+        by = pad + Math.random() * (H - FIGHT_H - pad * 2);
+        tries++;
+      } while (tries < 30 && (
+        (bx + FIGHT_W > boss.x - 10 && bx < boss.x + boss.size + 10 &&
+         by + FIGHT_H > boss.y - 10 && by < boss.y + boss.size + 10)
+        ||
+        (Math.hypot((bx + FIGHT_W/2) - player.x, (by + FIGHT_H/2) - player.y) < 80)
+      ));
+
+      fightButton = { x: bx, y: by, w: FIGHT_W, h: FIGHT_H, life: FIGHT_LIFETIME };
+    }
+
+    function collectFightButton() {
+      boss.hp -= FIGHT_DAMAGE;
+      if (boss.hp < 0) boss.hp = 0;
+      boss.hitFlash = 0.3;
+
+      damageTexts.push({
+        x: boss.x + boss.size / 2,
+        y: boss.y + boss.size + 12,
+        text: `DEALT ${FIGHT_DAMAGE} DMG`,
+        life: 1.0,
+        maxLife: 1.0
+      });
+
+      updateHud();
+      fightButton = null;
+
+      if (boss.hp <= 0) {
+        won = true;
+        gameOver = true;
+      }
+    }
+
+    // ==================== UPDATE ====================
+
+    function update(dt) {
+      if (gameOver) return;
+      totalTime += dt;
+
+      let mx = 0, my = 0;
+      if (keys['w'] || keys['arrowup']) my -= 1;
+      if (keys['s'] || keys['arrowdown']) my += 1;
+      if (keys['a'] || keys['arrowleft']) mx -= 1;
+      if (keys['d'] || keys['arrowright']) mx += 1;
+      if (mx || my) {
+        const len = Math.hypot(mx, my);
+        player.x += (mx / len) * PLAYER_SPEED * dt * 60;
+        player.y += (my / len) * PLAYER_SPEED * dt * 60;
+        player.x = Math.max(player.size / 2, Math.min(W - player.size / 2, player.x));
+        player.y = Math.max(player.size / 2, Math.min(H - player.size / 2, player.y));
+      }
+
+      if (player.invincible) {
+        player.invincibleTimer -= dt;
+        player.blinkAccum += dt;
+        if (player.blinkAccum >= 0.07) {
+          player.blinkAccum -= 0.07;
+          player.visible = !player.visible;
+        }
+        if (player.invincibleTimer <= 0) {
+          player.invincible = false;
+          player.visible = true;
+        }
+      }
+
+      if (boss.hitFlash > 0) boss.hitFlash -= dt;
+
+      phaseTimer -= dt;
+      if (phaseTimer <= 0) {
+        if (phase === 'idle') {
+          startPattern();
+        } else if (phase === 'warning') {
+          if (pendingPattern) {
+            pendingPattern.spawn(pendingPattern.ctx || {});
+            pendingPattern = null;
+          }
+          warning = null;
+          phase = 'idle';
+          phaseTimer = getCooldown();
+        }
+      }
+
+      if (phase === 'warning' && warning) {
+        if (warning.type === 'swarm') {
+          warningTextSpan.textContent = warning.fromLeft ? '← SWARM!' : 'SWARM! →';
+        } else if (warning.type === 'wall') {
+          warningTextSpan.textContent = warning.fromLeft ? '← WALL!' : 'WALL! →';
+        }
+      } else {
+        warningTextSpan.textContent = 'SAFE';
+      }
+
+      if (!fightButton && !won) {
+        fightSpawnTimer -= dt;
+        if (fightSpawnTimer <= 0) {
+          spawnFightButton();
+          fightSpawnTimer = nextFightSpawnDelay();   // scaled by current HP
+        }
+      }
+
+      if (fightButton) {
+        fightButton.life -= dt;
+        if (fightButton.life <= 0) {
+          fightButton = null;
+        } else {
+          const pHalf = player.size / 2;
+          if (player.x + pHalf > fightButton.x &&
+              player.x - pHalf < fightButton.x + fightButton.w &&
+              player.y + pHalf > fightButton.y &&
+              player.y - pHalf < fightButton.y + fightButton.h) {
+            collectFightButton();
+          }
+        }
+      }
+
+      for (let i = damageTexts.length - 1; i >= 0; i--) {
+        const t = damageTexts[i];
+        t.life -= dt;
+        t.y -= dt * 20;
+        if (t.life <= 0) damageTexts.splice(i, 1);
+      }
+
+      for (let i = bullets.length - 1; i >= 0; i--) {
+        const b = bullets[i];
+        b.x += b.vx * dt * 60;
+        b.y += b.vy * dt * 60;
+
+        if (b.x < -200 || b.x > W + 200 || b.y < -200 || b.y > H + 200) {
+          bullets.splice(i, 1);
+          continue;
+        }
+
+        if (!player.invincible) {
+          const h = b.size / 2;
+          const hitR = player.size / 2 * 0.6;
+          if (b.x + h > player.x - hitR && b.x - h < player.x + hitR &&
+              b.y + h > player.y - hitR && b.y - h < player.y + hitR) {
+            player.hp -= DAMAGE;
+            player.invincible = true;
+            player.invincibleTimer = INVINCIBLE_TIME;
+            player.blinkAccum = 0;
+            updateHud();
+            bullets.splice(i, 1);
+            if (player.hp <= 0) {
+              player.hp = 0;
+              gameOver = true;
+              updateHud();
+            }
+          }
+        }
+      }
+    }
+
+    // ==================== DRAW ====================
+
+    function draw() {
+      ctx.fillStyle = '#000';
+      ctx.fillRect(0, 0, W, H);
+
+      if (warning) {
+        if (warning.type === 'swarm') {
+          ctx.fillStyle = 'rgba(255,255,255,0.07)';
+          ctx.fillRect(0, warning.bandY, W, warning.bandHeight);
+          ctx.strokeStyle = '#fff';
+          ctx.lineWidth = 1;
+          ctx.setLineDash([6, 6]);
+          ctx.strokeRect(0, warning.bandY, W, warning.bandHeight);
+          ctx.setLineDash([]);
+          ctx.fillStyle = '#fff';
+          ctx.font = 'bold 26px monospace';
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          const arrowY = warning.bandY + warning.bandHeight / 2;
+          if (warning.fromLeft) {
+            ctx.fillText('→', 26, arrowY);
+          } else {
+            ctx.fillText('←', W - 26, arrowY);
+          }
+          ctx.textBaseline = 'alphabetic';
+        } else if (warning.type === 'wall') {
+          const x = warning.fromLeft ? 14 : W - 14;
+          ctx.strokeStyle = '#fff';
+          ctx.lineWidth = 3;
+          ctx.setLineDash([6, 6]);
+          ctx.beginPath();
+          ctx.moveTo(x, 0);
+          ctx.lineTo(x, warning.gapY);
+          ctx.moveTo(x, warning.gapY + warning.gapSize);
+          ctx.lineTo(x, H);
+          ctx.stroke();
+          ctx.setLineDash([]);
+          ctx.fillStyle = '#fff';
+          ctx.font = 'bold 26px monospace';
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          const arrowY = warning.gapY + warning.gapSize / 2;
+          if (warning.fromLeft) {
+            ctx.fillText('→', 30, arrowY);
+          } else {
+            ctx.fillText('←', W - 30, arrowY);
+          }
+          ctx.textBaseline = 'alphabetic';
+        }
+      }
+
+      ctx.fillStyle = '#fff';
+      for (const b of bullets) {
+        ctx.fillRect(b.x - b.size / 2, b.y - b.size / 2, b.size, b.size);
+      }
+
+      // Boss
+      const bossColor = boss.hitFlash > 0 ? '#afffaf' : '#22c55e';
+      ctx.fillStyle = bossColor;
+      ctx.fillRect(boss.x, boss.y, boss.size, boss.size);
+      ctx.strokeStyle = '#064e3b';
+      ctx.lineWidth = 3;
+      ctx.strokeRect(boss.x, boss.y, boss.size, boss.size);
+
+      const barW = boss.size + 20;
+      const barH = 6;
+      const barX = boss.x - 10;
+      const barY = boss.y - 14;
+      ctx.fillStyle = '#222';
+      ctx.fillRect(barX, barY, barW, barH);
+      ctx.fillStyle = '#22c55e';
+      ctx.fillRect(barX, barY, barW * (boss.hp / boss.maxHp), barH);
+
+      // Fight button
+      if (fightButton) {
+        const blink = fightButton.life < 1.0 && Math.floor(fightButton.life * 10) % 2 === 0;
+        ctx.fillStyle = blink ? '#cccccc' : '#ffff00';
+        ctx.fillRect(fightButton.x, fightButton.y, fightButton.w, fightButton.h);
+        ctx.strokeStyle = '#fff';
+        ctx.lineWidth = 2;
+        ctx.strokeRect(fightButton.x, fightButton.y, fightButton.w, fightButton.h);
+        ctx.fillStyle = '#000';
+        ctx.font = 'bold 18px monospace';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('FIGHT', fightButton.x + fightButton.w / 2, fightButton.y + fightButton.h / 2);
+        ctx.textBaseline = 'alphabetic';
+      }
+
+      // Player
+      if (!player.invincible || player.visible) {
+        ctx.fillStyle = '#f00';
+        ctx.fillRect(
+          player.x - player.size / 2,
+          player.y - player.size / 2,
+          player.size,
+          player.size
+        );
+      }
+
+      // Damage texts
+      for (const t of damageTexts) {
+        const alpha = t.life / t.maxLife;
+        ctx.fillStyle = `rgba(255, 60, 60, ${alpha})`;
+        ctx.font = 'bold 18px monospace';
+        ctx.textAlign = 'center';
+        ctx.fillText(t.text, t.x, t.y);
+      }
+
+      // Game over / win
+      if (gameOver) {
+        ctx.fillStyle = 'rgba(0,0,0,0.8)';
+        ctx.fillRect(0, 0, W, H);
+
+        if (won) {
+          ctx.fillStyle = '#22c55e';
+          ctx.font = 'bold 52px monospace';
+          ctx.textAlign = 'center';
+          ctx.fillText('YOU WIN!', W / 2, H / 2 - 30);
+          ctx.fillStyle = '#fff';
+          ctx.font = '20px monospace';
+          ctx.fillText('The green square has been defeated.', W / 2, H / 2 + 20);
+          ctx.font = 'bold 18px monospace';
+          ctx.fillText('press RESTART or R to play again', W / 2, H / 2 + 70);
+        } else {
+          ctx.fillStyle = '#f00';
+          ctx.font = 'bold 48px monospace';
+          ctx.textAlign = 'center';
+          ctx.fillText('GAME OVER', W / 2, H / 2 - 20);
+          ctx.fillStyle = '#fff';
+          ctx.font = '18px monospace';
+          ctx.fillText('press RESTART or R', W / 2, H / 2 + 40);
+        }
+      }
+    }
+
+    // ==================== LOOP ====================
+
+    function loop(now) {
+      if (!lastTimestamp) lastTimestamp = now;
+      let dt = (now - lastTimestamp) / 1000;
+      if (dt > 0.1) dt = 0.1;
+      lastTimestamp = now;
+
+      if (!gameOver) update(dt);
+      draw();
+      requestAnimationFrame(loop);
+    }
+
+    // ==================== INPUT ====================
+
+    window.addEventListener('keydown', (e) => {
+      const k = e.key.toLowerCase();
+      if (['w','a','s','d','arrowup','arrowdown','arrowleft','arrowright'].includes(k)) {
+        e.preventDefault();
+        keys[k] = true;
+      }
+      if (k === 'r') reset();
+    });
+
+    window.addEventListener('keyup', (e) => {
+      const k = e.key.toLowerCase();
+      if (['w','a','s','d','arrowup','arrowdown','arrowleft','arrowright'].includes(k)) {
+        e.preventDefault();
+        keys[k] = false;
+      }
+    });
+
+    document.getElementById('resetBtn').addEventListener('click', reset);
+
+    reset();
+    requestAnimationFrame(loop);
+  })();
+</script>
+</body>
+</html>
