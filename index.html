@@ -3,7 +3,9 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>red square · dodging white squares</title>
+<title>Dodging Game</title>
+<meta name="description" content="A tiny browser bullet-hell. Dodge white bullets, chip down the green boss, survive.">
+<link rel="icon" href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAHElEQVQ4jWNgGAWjYBSMglEwCkbBKBgFo2AUAAAHkgABivPFdgAAAABJRU5ErkJggg==">
 <style>
   * { box-sizing: border-box; user-select: none; }
   body {
@@ -15,6 +17,7 @@
     align-items: center;
     justify-content: center;
     font-family: monospace;
+    color: #fff;
   }
   canvas { display: block; background: #000; cursor: default; }
   .hud {
@@ -37,9 +40,252 @@
     cursor: pointer;
   }
   button:hover { background: #ccc; }
+
+  /* ============ MENU OVERLAY ============ */
+  #menu {
+    position: fixed;
+    inset: 0;
+    background: #000;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    z-index: 10;
+    padding: 24px;
+    overflow-y: auto;
+  }
+  #menu.hidden { display: none; }
+  .menu-title {
+    font-size: 36px;
+    letter-spacing: 4px;
+    margin-bottom: 4px;
+    color: #f00;
+    text-shadow: 0 0 12px #f00;
+  }
+  .menu-sub {
+    color: #888;
+    font-size: 13px;
+    letter-spacing: 1px;
+    margin-bottom: 32px;
+  }
+  .menu-panel {
+    border: 2px solid #333;
+    padding: 24px 32px;
+    background: #0a0a0a;
+    min-width: 420px;
+    max-width: 520px;
+  }
+  .opt-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 20px;
+    gap: 16px;
+  }
+  .opt-label {
+    font-size: 14px;
+    letter-spacing: 1px;
+    color: #ddd;
+    flex: 1;
+  }
+  .opt-label small {
+    display: block;
+    color: #666;
+    font-size: 11px;
+    margin-top: 3px;
+    letter-spacing: 0;
+  }
+  .opt-input {
+    background: #000;
+    color: #fff;
+    border: 2px solid #fff;
+    padding: 6px 10px;
+    font-family: monospace;
+    font-size: 16px;
+    width: 90px;
+    text-align: center;
+  }
+  .opt-input:focus {
+    outline: none;
+    border-color: #f00;
+  }
+  /* Slider for speed */
+  .speed-row {
+    display: flex;
+    flex-direction: column;
+    margin-bottom: 20px;
+  }
+  .speed-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    margin-bottom: 6px;
+  }
+  .speed-value {
+    color: #f00;
+    font-size: 16px;
+    font-weight: bold;
+  }
+  input[type="range"] {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 100%;
+    height: 6px;
+    background: #333;
+    outline: none;
+    cursor: pointer;
+  }
+  input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 16px;
+    height: 16px;
+    background: #fff;
+    border: none;
+    cursor: pointer;
+  }
+  input[type="range"]::-moz-range-thumb {
+    width: 16px;
+    height: 16px;
+    background: #fff;
+    border: none;
+    cursor: pointer;
+    border-radius: 0;
+  }
+  /* Toggle switch */
+  .toggle {
+    position: relative;
+    width: 54px;
+    height: 26px;
+    background: #333;
+    border: 2px solid #666;
+    cursor: pointer;
+    flex-shrink: 0;
+    transition: background 0.15s;
+  }
+  .toggle.on {
+    background: #f00;
+    border-color: #f00;
+  }
+  .toggle::after {
+    content: '';
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: 18px;
+    height: 18px;
+    background: #fff;
+    transition: left 0.15s;
+  }
+  .toggle.on::after {
+    left: 30px;
+  }
+  .menu-actions {
+    display: flex;
+    gap: 12px;
+    margin-top: 8px;
+  }
+  .menu-btn {
+    flex: 1;
+    padding: 10px 16px;
+    font-size: 15px;
+    letter-spacing: 2px;
+    border: 2px solid #fff;
+    background: #fff;
+    color: #000;
+    cursor: pointer;
+    font-family: monospace;
+    font-weight: bold;
+  }
+  .menu-btn:hover { background: #ccc; border-color: #ccc; }
+  .menu-btn.primary {
+    background: #f00;
+    border-color: #f00;
+    color: #fff;
+  }
+  .menu-btn.primary:hover {
+    background: #c00;
+    border-color: #c00;
+  }
+  .preset-row {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 22px;
+  }
+  .preset-btn {
+    flex: 1;
+    padding: 5px 4px;
+    font-size: 11px;
+    letter-spacing: 1px;
+    background: #000;
+    color: #fff;
+    border: 1px solid #444;
+    cursor: pointer;
+    font-family: monospace;
+  }
+  .preset-btn:hover {
+    border-color: #fff;
+  }
 </style>
 </head>
 <body>
+
+<!-- ============ PRE-STARTUP MENU ============ -->
+<div id="menu">
+  <div class="menu-title">DODGING GAME</div>
+  <div class="menu-sub">a tiny browser bullet-hell</div>
+
+  <div class="menu-panel">
+    <div class="preset-row">
+      <button class="preset-btn" data-preset="easy">EASY</button>
+      <button class="preset-btn" data-preset="normal">NORMAL</button>
+      <button class="preset-btn" data-preset="hard">HARD</button>
+      <button class="preset-btn" data-preset="custom">CUSTOM</button>
+    </div>
+
+    <div class="opt-row">
+      <label class="opt-label" for="playerHpInput">
+        PLAYER HP
+        <small>how much damage you can take</small>
+      </label>
+      <input id="playerHpInput" class="opt-input" type="number" min="5" max="999" step="5" value="80">
+    </div>
+
+    <div class="opt-row">
+      <label class="opt-label" for="bossHpInput">
+        BOSS HP
+        <small>chip it down with FIGHT buttons</small>
+      </label>
+      <input id="bossHpInput" class="opt-input" type="number" min="8" max="9999" step="8" value="160">
+    </div>
+
+    <div class="speed-row">
+      <div class="speed-header">
+        <label class="opt-label" for="playerSpeedInput" style="margin:0;">
+          PLAYER SPEED
+          <small>default 6 · max 255 (ludicrous)</small>
+        </label>
+        <span class="speed-value" id="speedValue">6</span>
+      </div>
+      <input id="playerSpeedInput" type="range" min="6" max="255" step="1" value="6">
+    </div>
+
+    <div class="opt-row">
+      <label class="opt-label">
+        ATTACK_PER_HP MODE
+        <small>lower HP → more attacks per second (harder)</small>
+      </label>
+      <div id="apHpToggle" class="toggle"></div>
+    </div>
+
+    <div class="menu-actions">
+      <button id="startBtn" class="menu-btn primary">START</button>
+      <button id="menuResetBtn" class="menu-btn">RESET</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============ GAME ============ -->
 <div class="hud">
   <span id="hpText">HP: 80 / 80</span>
   <span id="bossText">BOSS: 160 / 160</span>
@@ -56,35 +302,126 @@
     const bossTextSpan = document.getElementById('bossText');
     const warningTextSpan = document.getElementById('warningText');
 
+    // ============ OPTIONS ============
+    const DEFAULTS = {
+      playerHp: 80,
+      bossHp: 160,
+      playerSpeed: 6,
+      attackPerHp: false
+    };
+
+    const options = { ...DEFAULTS };
+
+    const PRESETS = {
+      easy:   { playerHp: 120, bossHp: 120, playerSpeed: 7, attackPerHp: false },
+      normal: { playerHp: 80,  bossHp: 160, playerSpeed: 6, attackPerHp: false },
+      hard:   { playerHp: 60,  bossHp: 240, playerSpeed: 5, attackPerHp: true  }
+    };
+
+    // Menu DOM
+    const menu = document.getElementById('menu');
+    const playerHpInput = document.getElementById('playerHpInput');
+    const bossHpInput = document.getElementById('bossHpInput');
+    const playerSpeedInput = document.getElementById('playerSpeedInput');
+    const speedValue = document.getElementById('speedValue');
+    const apHpToggle = document.getElementById('apHpToggle');
+    const startBtn = document.getElementById('startBtn');
+    const menuResetBtn = document.getElementById('menuResetBtn');
+
+    function syncMenuFromOptions() {
+      playerHpInput.value = options.playerHp;
+      bossHpInput.value = options.bossHp;
+      playerSpeedInput.value = options.playerSpeed;
+      speedValue.textContent = options.playerSpeed;
+      apHpToggle.classList.toggle('on', options.attackPerHp);
+    }
+
+    function readOptionsFromMenu() {
+      let pHp = parseInt(playerHpInput.value, 10);
+      let bHp = parseInt(bossHpInput.value, 10);
+      let spd = parseInt(playerSpeedInput.value, 10);
+      if (!Number.isFinite(pHp) || pHp < 5) pHp = 5;
+      if (pHp > 999) pHp = 999;
+      if (!Number.isFinite(bHp) || bHp < 8) bHp = 8;
+      if (bHp > 9999) bHp = 9999;
+      if (!Number.isFinite(spd) || spd < 6) spd = 6;
+      if (spd > 255) spd = 255;
+      options.playerHp = pHp;
+      options.bossHp = bHp;
+      options.playerSpeed = spd;
+      options.attackPerHp = apHpToggle.classList.contains('on');
+    }
+
+    // Speed slider live update
+    playerSpeedInput.addEventListener('input', () => {
+      speedValue.textContent = playerSpeedInput.value;
+    });
+
+    // Toggle
+    apHpToggle.addEventListener('click', () => {
+      apHpToggle.classList.toggle('on');
+    });
+
+    // Presets
+    document.querySelectorAll('.preset-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const name = btn.dataset.preset;
+        if (name === 'custom') return;
+        const p = PRESETS[name];
+        options.playerHp = p.playerHp;
+        options.bossHp = p.bossHp;
+        options.playerSpeed = p.playerSpeed;
+        options.attackPerHp = p.attackPerHp;
+        syncMenuFromOptions();
+      });
+    });
+
+    // Menu reset
+    menuResetBtn.addEventListener('click', () => {
+      Object.assign(options, DEFAULTS);
+      syncMenuFromOptions();
+    });
+
+    // Start
+    startBtn.addEventListener('click', () => {
+      readOptionsFromMenu();
+      menu.classList.add('hidden');
+      startGame();
+    });
+
+    // ============ GAME CONSTANTS ============
     const PLAYER_SIZE = 12;
-    const PLAYER_SPEED = 6;
-    const MAX_HP = 80;
     const DAMAGE = 5;
     const INVINCIBLE_TIME = 0.9;
 
     const W = canvas.width;
     const H = canvas.height;
 
-    // Boss
     const BOSS_SIZE = 60;
-    const BOSS_MAX_HP = 160;
     const FIGHT_DAMAGE = 8;
 
-    // Fight button — base timings at full HP
     const FIGHT_W = 80;
     const FIGHT_H = 30;
     const FIGHT_LIFETIME = 4.0;
     const FIGHT_SPAWN_MIN = 3.5;
     const FIGHT_SPAWN_MAX = 5.5;
-    // At 0 HP, multiply spawn delay by this (smaller = faster spawns)
     const FIGHT_SPAWN_LOWHP_MULT = 0.3;
 
+    const HIT_FLASH_TIME = 0.3;
+    const SLASH_TIME = 0.22;
+    const SHAKE_TIME = 0.28;
+    const SHAKE_AMP = 6;
+
+    const APHP_COOLDOWN_MIN_MULT = 0.45;
+
+    // ============ GAME STATE ============
     let player = {
       x: W / 2,
       y: H / 2,
       size: PLAYER_SIZE,
-      hp: MAX_HP,
-      maxHp: MAX_HP,
+      hp: options.playerHp,
+      maxHp: options.playerHp,
+      speed: options.playerSpeed,
       invincible: false,
       invincibleTimer: 0,
       visible: true,
@@ -95,9 +432,13 @@
       x: W - 90,
       y: 90,
       size: BOSS_SIZE,
-      hp: BOSS_MAX_HP,
-      maxHp: BOSS_MAX_HP,
-      hitFlash: 0
+      hp: options.bossHp,
+      maxHp: options.bossHp,
+      hitFlash: 0,
+      slashTimer: 0,
+      slashAngle: 0,
+      shakeTimer: 0,
+      shakeOffset: { x: 0, y: 0 }
     };
 
     let bullets = [];
@@ -117,25 +458,34 @@
     let gameOver = false;
     let won = false;
     let lastTimestamp = 0;
+    let running = false;
 
     function updateHud() {
       hpTextSpan.textContent = `HP: ${Math.max(0, player.hp)} / ${player.maxHp}`;
       bossTextSpan.textContent = `BOSS: ${Math.max(0, boss.hp)} / ${boss.maxHp}`;
     }
 
-    function reset() {
+    function resetState() {
       gameOver = false;
       won = false;
+
       player.x = W / 2;
       player.y = H / 2;
-      player.hp = MAX_HP;
+      player.hp = options.playerHp;
+      player.maxHp = options.playerHp;
+      player.speed = options.playerSpeed;
       player.invincible = false;
       player.invincibleTimer = 0;
       player.visible = true;
       player.blinkAccum = 0;
 
-      boss.hp = BOSS_MAX_HP;
+      boss.hp = options.bossHp;
+      boss.maxHp = options.bossHp;
       boss.hitFlash = 0;
+      boss.slashTimer = 0;
+      boss.slashAngle = 0;
+      boss.shakeTimer = 0;
+      boss.shakeOffset = { x: 0, y: 0 };
 
       bullets = [];
       warning = null;
@@ -153,17 +503,26 @@
       warningTextSpan.textContent = 'SAFE';
     }
 
-    // Returns the next fight-button spawn delay based on current HP.
-    // Low HP → shorter delay → more buttons.
+    function startGame() {
+      resetState();
+      running = true;
+      lastTimestamp = 0;
+    }
+
+    function restartGame() {
+      resetState();
+      running = true;
+      lastTimestamp = 0;
+    }
+
     function nextFightSpawnDelay() {
       const baseDelay = FIGHT_SPAWN_MIN + Math.random() * (FIGHT_SPAWN_MAX - FIGHT_SPAWN_MIN);
-      const hpRatio = Math.max(0, Math.min(1, player.hp / player.maxHp));  // 1 = full, 0 = dead
-      // Lerp between low-HP multiplier (0 HP) and 1.0 (full HP)
+      const hpRatio = Math.max(0, Math.min(1, player.hp / player.maxHp));
       const mult = FIGHT_SPAWN_LOWHP_MULT + (1 - FIGHT_SPAWN_LOWHP_MULT) * hpRatio;
       return baseDelay * mult;
     }
 
-    // ==================== ATTACK PATTERNS ====================
+    // ============ ATTACK PATTERNS ============
 
     function spawnSwarm(fromLeft, bandY, bandHeight) {
       const startX = fromLeft ? -20 : W + 20;
@@ -247,8 +606,6 @@
       }
     }
 
-    // ==================== PATTERN SCHEDULER ====================
-
     const patterns = [
       { name: 'swarm',  weight: 3, spawn: (c) => spawnSwarm(c.fromLeft, c.bandY, c.bandHeight) },
       { name: 'rain',   weight: 2, spawn: () => spawnRain() },
@@ -270,7 +627,13 @@
     function getCooldown() {
       const base = 1.5;
       const minCd = 0.7;
-      return Math.max(minCd, base - totalTime * 0.006);
+      let cd = Math.max(minCd, base - totalTime * 0.006);
+      if (options.attackPerHp) {
+        const hpRatio = Math.max(0, Math.min(1, player.hp / player.maxHp));
+        const mult = APHP_COOLDOWN_MIN_MULT + (1 - APHP_COOLDOWN_MIN_MULT) * hpRatio;
+        cd *= mult;
+      }
+      return cd;
     }
 
     function startPattern() {
@@ -307,7 +670,7 @@
       }
     }
 
-    // ==================== FIGHT BUTTON ====================
+    // ============ FIGHT BUTTON ============
 
     function spawnFightButton() {
       const pad = 20;
@@ -329,7 +692,11 @@
     function collectFightButton() {
       boss.hp -= FIGHT_DAMAGE;
       if (boss.hp < 0) boss.hp = 0;
-      boss.hitFlash = 0.3;
+
+      boss.hitFlash = HIT_FLASH_TIME;
+      boss.slashTimer = SLASH_TIME;
+      boss.slashAngle = (boss.slashAngle + 1) % 2;
+      boss.shakeTimer = SHAKE_TIME;
 
       damageTexts.push({
         x: boss.x + boss.size / 2,
@@ -345,10 +712,11 @@
       if (boss.hp <= 0) {
         won = true;
         gameOver = true;
+        running = false;
       }
     }
 
-    // ==================== UPDATE ====================
+    // ============ UPDATE ============
 
     function update(dt) {
       if (gameOver) return;
@@ -361,8 +729,8 @@
       if (keys['d'] || keys['arrowright']) mx += 1;
       if (mx || my) {
         const len = Math.hypot(mx, my);
-        player.x += (mx / len) * PLAYER_SPEED * dt * 60;
-        player.y += (my / len) * PLAYER_SPEED * dt * 60;
+        player.x += (mx / len) * player.speed * dt * 60;
+        player.y += (my / len) * player.speed * dt * 60;
         player.x = Math.max(player.size / 2, Math.min(W - player.size / 2, player.x));
         player.y = Math.max(player.size / 2, Math.min(H - player.size / 2, player.y));
       }
@@ -381,6 +749,17 @@
       }
 
       if (boss.hitFlash > 0) boss.hitFlash -= dt;
+      if (boss.slashTimer > 0) boss.slashTimer -= dt;
+      if (boss.shakeTimer > 0) {
+        boss.shakeTimer -= dt;
+        const t = boss.shakeTimer / SHAKE_TIME;
+        const amp = SHAKE_AMP * t;
+        boss.shakeOffset.x = (Math.random() - 0.5) * 2 * amp;
+        boss.shakeOffset.y = (Math.random() - 0.5) * 2 * amp;
+      } else {
+        boss.shakeOffset.x = 0;
+        boss.shakeOffset.y = 0;
+      }
 
       phaseTimer -= dt;
       if (phaseTimer <= 0) {
@@ -411,7 +790,7 @@
         fightSpawnTimer -= dt;
         if (fightSpawnTimer <= 0) {
           spawnFightButton();
-          fightSpawnTimer = nextFightSpawnDelay();   // scaled by current HP
+          fightSpawnTimer = nextFightSpawnDelay();
         }
       }
 
@@ -461,6 +840,7 @@
             if (player.hp <= 0) {
               player.hp = 0;
               gameOver = true;
+              running = false;
               updateHud();
             }
           }
@@ -468,7 +848,7 @@
       }
     }
 
-    // ==================== DRAW ====================
+    // ============ DRAW ============
 
     function draw() {
       ctx.fillStyle = '#000';
@@ -525,13 +905,31 @@
         ctx.fillRect(b.x - b.size / 2, b.y - b.size / 2, b.size, b.size);
       }
 
-      // Boss
+      const bossDrawX = boss.x + boss.shakeOffset.x;
+      const bossDrawY = boss.y + boss.shakeOffset.y;
       const bossColor = boss.hitFlash > 0 ? '#afffaf' : '#22c55e';
       ctx.fillStyle = bossColor;
-      ctx.fillRect(boss.x, boss.y, boss.size, boss.size);
+      ctx.fillRect(bossDrawX, bossDrawY, boss.size, boss.size);
       ctx.strokeStyle = '#064e3b';
       ctx.lineWidth = 3;
-      ctx.strokeRect(boss.x, boss.y, boss.size, boss.size);
+      ctx.strokeRect(bossDrawX, bossDrawY, boss.size, boss.size);
+
+      if (boss.slashTimer > 0) {
+        const alpha = Math.min(1, boss.slashTimer / SLASH_TIME);
+        ctx.strokeStyle = `rgba(255, 0, 0, ${alpha})`;
+        ctx.lineWidth = 4;
+        ctx.lineCap = 'round';
+        ctx.beginPath();
+        if (boss.slashAngle === 0) {
+          ctx.moveTo(bossDrawX + 6, bossDrawY + 6);
+          ctx.lineTo(bossDrawX + boss.size - 6, bossDrawY + boss.size - 6);
+        } else {
+          ctx.moveTo(bossDrawX + boss.size - 6, bossDrawY + 6);
+          ctx.lineTo(bossDrawX + 6, bossDrawY + boss.size - 6);
+        }
+        ctx.stroke();
+        ctx.lineCap = 'butt';
+      }
 
       const barW = boss.size + 20;
       const barH = 6;
@@ -542,7 +940,6 @@
       ctx.fillStyle = '#22c55e';
       ctx.fillRect(barX, barY, barW * (boss.hp / boss.maxHp), barH);
 
-      // Fight button
       if (fightButton) {
         const blink = fightButton.life < 1.0 && Math.floor(fightButton.life * 10) % 2 === 0;
         ctx.fillStyle = blink ? '#cccccc' : '#ffff00';
@@ -558,7 +955,6 @@
         ctx.textBaseline = 'alphabetic';
       }
 
-      // Player
       if (!player.invincible || player.visible) {
         ctx.fillStyle = '#f00';
         ctx.fillRect(
@@ -569,7 +965,6 @@
         );
       }
 
-      // Damage texts
       for (const t of damageTexts) {
         const alpha = t.life / t.maxLife;
         ctx.fillStyle = `rgba(255, 60, 60, ${alpha})`;
@@ -578,7 +973,6 @@
         ctx.fillText(t.text, t.x, t.y);
       }
 
-      // Game over / win
       if (gameOver) {
         ctx.fillStyle = 'rgba(0,0,0,0.8)';
         ctx.fillRect(0, 0, W, H);
@@ -592,7 +986,7 @@
           ctx.font = '20px monospace';
           ctx.fillText('The green square has been defeated.', W / 2, H / 2 + 20);
           ctx.font = 'bold 18px monospace';
-          ctx.fillText('press RESTART or R to play again', W / 2, H / 2 + 70);
+          ctx.fillText('press R or RESTART to play again', W / 2, H / 2 + 70);
         } else {
           ctx.fillStyle = '#f00';
           ctx.font = 'bold 48px monospace';
@@ -600,12 +994,12 @@
           ctx.fillText('GAME OVER', W / 2, H / 2 - 20);
           ctx.fillStyle = '#fff';
           ctx.font = '18px monospace';
-          ctx.fillText('press RESTART or R', W / 2, H / 2 + 40);
+          ctx.fillText('press R or RESTART', W / 2, H / 2 + 40);
         }
       }
     }
 
-    // ==================== LOOP ====================
+    // ============ LOOP ============
 
     function loop(now) {
       if (!lastTimestamp) lastTimestamp = now;
@@ -613,12 +1007,12 @@
       if (dt > 0.1) dt = 0.1;
       lastTimestamp = now;
 
-      if (!gameOver) update(dt);
+      if (running && !gameOver) update(dt);
       draw();
       requestAnimationFrame(loop);
     }
 
-    // ==================== INPUT ====================
+    // ============ INPUT ============
 
     window.addEventListener('keydown', (e) => {
       const k = e.key.toLowerCase();
@@ -626,7 +1020,7 @@
         e.preventDefault();
         keys[k] = true;
       }
-      if (k === 'r') reset();
+      if (k === 'r' && running) restartGame();
     });
 
     window.addEventListener('keyup', (e) => {
@@ -637,9 +1031,14 @@
       }
     });
 
-    document.getElementById('resetBtn').addEventListener('click', reset);
+    document.getElementById('resetBtn').addEventListener('click', () => {
+      if (running) restartGame();
+    });
 
-    reset();
+    // ============ BOOT ============
+    updateHud();
+    draw();
+    syncMenuFromOptions();
     requestAnimationFrame(loop);
   })();
 </script>
